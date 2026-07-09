@@ -28,13 +28,17 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 // Spawn a burst of particles plus an expanding shockwave at an impact point.
 // `nx`/`ny` is the (unit) surface normal so the debris sprays back outward
-// from the planet rather than into it.
+// from the planet rather than into it. Pass no normal (a shot fizzling out in
+// open space, or a ship blowing up) for an even, all-directions burst.
 function createExplosion(x, y, nx, ny) {
-  const baseAngle = Math.atan2(ny, nx);
+  const hasNormal = nx !== undefined && ny !== undefined;
+  // With a surface normal, spray into the outward-facing hemisphere; without
+  // one, spray the full circle.
+  const baseAngle = hasNormal ? Math.atan2(ny, nx) : 0;
+  const spread = hasNormal ? Math.PI / 2 : Math.PI;
   const particles = [];
   for (let i = 0; i < PARTICLE_COUNT; i += 1) {
-    // Bias the spray into the hemisphere pointing away from the planet.
-    const angle = baseAngle + randBetween(-Math.PI / 2, Math.PI / 2);
+    const angle = baseAngle + randBetween(-spread, spread);
     const speed = randBetween(60, 240);
     particles.push({
       x,
@@ -454,6 +458,7 @@ function Game({ session, initialGame, onLeave }) {
         anim.i += dt / SIM_DT;
         if (anim.i >= anim.path.length) {
           if (anim.impact) {
+            // Planet strike: directional burst off the surface normal.
             explosionsRef.current.push(
               createExplosion(
                 anim.impact.x,
@@ -462,6 +467,11 @@ function Game({ session, initialGame, onLeave }) {
                 anim.impact.ny,
               ),
             );
+          } else {
+            // Fizzled out on its timer, or blew up a ship: all-directions
+            // burst at wherever the shot ended.
+            const end = anim.path[anim.path.length - 1];
+            explosionsRef.current.push(createExplosion(end.x, end.y));
           }
           animRef.current = null;
           commit(latestRef.current);
