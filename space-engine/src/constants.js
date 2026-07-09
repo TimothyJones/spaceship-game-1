@@ -6,8 +6,14 @@ export const MAX_PLANETS = 5;
 export const SHOT_RADIUS = 5;
 export const SHOT_LIFETIME = 10; // seconds a shot lives, even off-screen
 // Gravitational constant, tuned for gameplay. A planet's mass scales with
-// radius², so bigger planets pull harder; pull falls off with distance².
+// radius², so bigger planets pull harder. Pull falls off with distance^FALLOFF:
+// true inverse-square (2) fades out fast, so distant shots barely feel it. A
+// gentler exponent gives gravity a much longer reach. Strength is normalised at
+// GRAVITY_REF, so lowering the falloff pivots around that distance — the feel at
+// ~REF is unchanged while far-out shots are pulled noticeably more.
 export const GRAVITY = 1000;
+export const GRAVITY_FALLOFF = 1.4; // < 2 extends gravity's range; 2 is inverse-square
+export const GRAVITY_REF = 180; // px; acceleration at this distance is unchanged by falloff
 export const ROTATION_SPEED = Math.PI / 2; // radians per second while an arrow is held
 export const SHIP_NOSE = 18; // distance from ship centre to its nose
 export const SHIP_HIT_RADIUS = 16; // ships are treated as circles for hit detection

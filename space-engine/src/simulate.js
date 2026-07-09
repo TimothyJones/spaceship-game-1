@@ -1,5 +1,7 @@
 import {
   GRAVITY,
+  GRAVITY_FALLOFF,
+  GRAVITY_REF,
   SHOT_RADIUS,
   SHOT_LIFETIME,
   SHOT_SPAWN_DIST,
@@ -32,15 +34,19 @@ export function simulateShot(planets, ships, shooter, angle, power) {
   while (elapsed < SHOT_LIFETIME) {
     elapsed += SIM_DT;
 
-    // Each planet attracts the shot:
-    // acceleration = GRAVITY * radius² / distance², pointed at its centre.
+    // Each planet attracts the shot: acceleration =
+    // GRAVITY * radius² / distance^FALLOFF (normalised at GRAVITY_REF),
+    // pointed at its centre. A falloff below 2 gives gravity a longer reach.
     for (const p of planets) {
       const dx = p.x - x;
       const dy = p.y - y;
-      const distSq = dx * dx + dy * dy;
-      const dist = Math.sqrt(distSq);
+      const dist = Math.hypot(dx, dy);
       if (dist === 0) continue;
-      const accel = (GRAVITY * p.radius * p.radius) / distSq;
+      // Normalised falloff: denominator is dist^FALLOFF scaled so it equals
+      // dist² at GRAVITY_REF, so the pull at REF is unchanged.
+      const falloff =
+        dist ** GRAVITY_FALLOFF * GRAVITY_REF ** (2 - GRAVITY_FALLOFF);
+      const accel = (GRAVITY * p.radius * p.radius) / falloff;
       vx += (dx / dist) * accel * SIM_DT;
       vy += (dy / dist) * accel * SIM_DT;
     }

@@ -23,6 +23,11 @@ const EXPLOSION_DURATION = 0.6; // seconds a burst lives for
 const PARTICLE_COUNT = 16;
 const EXPLOSION_COLORS = ["#fff3c4", "#ffd24a", "#ff9d3c", "#ff5a2c"];
 
+// Camera zoom that keeps the in-flight shot framed. A shot can curve far out
+// into space under gravity; the camera eases out to follow it, then back.
+const VIEW_PADDING = 40; // world-space breathing room to leave around the shot
+const ZOOM_SMOOTHNESS = 6; // eases the camera toward its target; higher = faster
+
 const randBetween = (min, max) => min + Math.random() * (max - min);
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
@@ -285,6 +290,9 @@ function Game({ session, initialGame, onLeave }) {
   const heldKeysRef = useRef(new Set());
   const fireBusyRef = useRef(false);
   const fireRef = useRef(() => {});
+  // Camera used to zoom out and keep the in-flight shot framed. scale 1 centred
+  // on the canvas middle is the default (identity) view.
+  const cameraRef = useRef({ scale: 1, cx: WIDTH / 2, cy: HEIGHT / 2 });
 
   const [shownGame, setShownGame] = useState(initialGame);
   const [error, setError] = useState(null);
@@ -444,16 +452,11 @@ function Game({ session, initialGame, onLeave }) {
       }
 
       drawBackground(ctx);
-      const planets = anim ? anim.shot.planets : game.planets;
-      planets.forEach((planet) => drawPlanet(ctx, planet));
 
-      game.ships.forEach((ship, i) => {
-        let angle = ship.angle;
-        if (anim && i === anim.shot.shooter) angle = anim.shot.angle;
-        else if (myTurn && i === me) angle = aimRef.current.angle;
-        drawShip(ctx, { ...ship, angle }, SHIP_COLORS[i]);
-      });
-
+      // Advance the shot replay first, so the camera can frame its new
+      // position and the end-of-flight burst fires exactly once.
+      let shotPoint = null;
+      let ttlText = null;
       if (anim) {
         anim.i += dt / SIM_DT;
         if (anim.i >= anim.path.length) {
@@ -476,20 +479,61 @@ function Game({ session, initialGame, onLeave }) {
           animRef.current = null;
           commit(latestRef.current);
         } else {
-          const point = anim.path[Math.floor(anim.i)];
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, SHOT_RADIUS, 0, Math.PI * 2);
-          ctx.fillStyle = "#ffd94a";
-          ctx.fill();
-
+          shotPoint = anim.path[Math.floor(anim.i)];
           const remaining = Math.max(SHOT_LIFETIME - anim.i * SIM_DT, 0);
           const seconds = Math.floor(remaining);
           const decis = Math.floor((remaining - seconds) * 10);
-          ctx.fillStyle = "#ffd94a";
-          ctx.font = "14px monospace";
-          ctx.textAlign = "right";
-          ctx.fillText(`${seconds}.${decis}s`, WIDTH - 12, HEIGHT - 14);
+          ttlText = `${seconds}.${decis}s`;
         }
+      }
+
+      // Fit the camera to a box holding the default frame plus the live shot
+      // (padded); unioning with the frame means we only ever zoom out, never
+      // in, and the board is never cropped. With no shot the box is exactly
+      // the frame, so the camera eases back to the default view.
+      let minX = 0;
+      let minY = 0;
+      let maxX = WIDTH;
+      let maxY = HEIGHT;
+      if (shotPoint) {
+        minX = Math.min(minX, shotPoint.x - VIEW_PADDING);
+        maxX = Math.max(maxX, shotPoint.x + VIEW_PADDING);
+        minY = Math.min(minY, shotPoint.y - VIEW_PADDING);
+        maxY = Math.max(maxY, shotPoint.y + VIEW_PADDING);
+      }
+      const targetScale = Math.min(
+        1,
+        WIDTH / (maxX - minX),
+        HEIGHT / (maxY - minY),
+      );
+      const camera = cameraRef.current;
+      const ease = 1 - Math.exp(-ZOOM_SMOOTHNESS * dt);
+      camera.scale += (targetScale - camera.scale) * ease;
+      camera.cx += ((minX + maxX) / 2 - camera.cx) * ease;
+      camera.cy += ((minY + maxY) / 2 - camera.cy) * ease;
+
+      // Gameplay layer, drawn through the camera transform: scale about the
+      // canvas centre, then recentre on the camera's focus point.
+      ctx.save();
+      ctx.translate(WIDTH / 2, HEIGHT / 2);
+      ctx.scale(camera.scale, camera.scale);
+      ctx.translate(-camera.cx, -camera.cy);
+
+      const planets = anim ? anim.shot.planets : game.planets;
+      planets.forEach((planet) => drawPlanet(ctx, planet));
+
+      game.ships.forEach((ship, i) => {
+        let angle = ship.angle;
+        if (anim && i === anim.shot.shooter) angle = anim.shot.angle;
+        else if (myTurn && i === me) angle = aimRef.current.angle;
+        drawShip(ctx, { ...ship, angle }, SHIP_COLORS[i]);
+      });
+
+      if (shotPoint) {
+        ctx.beginPath();
+        ctx.arc(shotPoint.x, shotPoint.y, SHOT_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffd94a";
+        ctx.fill();
       }
 
       explosionsRef.current = updateExplosions(explosionsRef.current, dt);
@@ -499,6 +543,16 @@ function Game({ session, initialGame, onLeave }) {
 
       if (myTurn) {
         drawAimGuide(ctx, game.ships[me], aimRef.current.angle, charge ?? 0);
+      }
+
+      ctx.restore();
+
+      // HUD, drawn in screen space so it ignores the camera zoom.
+      if (ttlText) {
+        ctx.fillStyle = "#ffd94a";
+        ctx.font = "14px monospace";
+        ctx.textAlign = "right";
+        ctx.fillText(ttlText, WIDTH - 12, HEIGHT - 14);
       }
       if (charge !== null) drawChargeBar(ctx, charge);
 
