@@ -196,13 +196,17 @@ function generatePlanets() {
 
 // Spawn a burst of particles plus an expanding shockwave at an impact point.
 // `nx`/`ny` is the (unit) surface normal so the debris sprays back outward
-// from the planet rather than into it.
+// from the planet rather than into it. Pass no normal (e.g. a shot fizzling out
+// in open space) for an even, all-directions burst.
 function createExplosion(x, y, nx, ny) {
-  const baseAngle = Math.atan2(ny, nx);
+  const hasNormal = nx !== undefined && ny !== undefined;
+  // With a surface normal, spray into the outward-facing hemisphere; without
+  // one, spray the full circle.
+  const baseAngle = hasNormal ? Math.atan2(ny, nx) : 0;
+  const spread = hasNormal ? Math.PI / 2 : Math.PI;
   const particles = [];
   for (let i = 0; i < PARTICLE_COUNT; i += 1) {
-    // Bias the spray into the hemisphere pointing away from the planet.
-    const angle = baseAngle + randBetween(-Math.PI / 2, Math.PI / 2);
+    const angle = baseAngle + randBetween(-spread, spread);
     const speed = randBetween(60, 240);
     particles.push({
       x,
@@ -444,12 +448,16 @@ function drawScene(ctx, planets, shots, explosions, charge) {
 // Shots may leave the screen and be pulled back by gravity, so they only
 // expire when their lifetime does. Each planet attracts shots:
 // acceleration = GRAVITY * radius² / distance², pointed at the planet's centre.
-// A shot that strikes a planet pushes an explosion into `explosions`; planets
-// are indestructible, so the shot is simply consumed.
+// A shot that strikes a planet or runs out of time pushes an explosion into
+// `explosions`; planets are indestructible, so the shot is simply consumed.
 function updateShots(shots, planets, dt, explosions) {
   return shots.filter((shot) => {
     shot.ttl -= dt;
-    if (shot.ttl <= 0) return false;
+    if (shot.ttl <= 0) {
+      // Out of time: the shot fizzles out with an all-directions burst.
+      explosions.push(createExplosion(shot.x, shot.y));
+      return false;
+    }
 
     planets.forEach((p) => {
       const dx = p.x - shot.x;
