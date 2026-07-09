@@ -7,7 +7,11 @@ const MIN_PLANETS = 3;
 const MAX_PLANETS = 5;
 
 const SHOT_RADIUS = 5;
-const SHOT_SPEED = 280; // pixels per second
+// A shot's launch speed depends on how long Space is held. Releasing instantly
+// fires at the minimum; holding for CHARGE_TIME seconds reaches the maximum.
+const SHOT_MIN_SPEED = 160; // pixels per second, at no charge
+const SHOT_MAX_SPEED = 560; // pixels per second, at full charge
+const CHARGE_TIME = 1.4; // seconds of holding Space to reach full power
 const SHOT_LIFETIME = 10; // seconds a shot lives, even off-screen
 // Gravitational constant, tuned for gameplay. A planet's mass scales with
 // radius², so bigger planets pull harder; pull falls off with distance².
@@ -296,7 +300,35 @@ function drawPlanet(ctx, planet) {
   ctx.stroke();
 }
 
-function drawScene(ctx, planets, shots) {
+// Draw the power meter that fills while Space is held. `charge` is a fraction
+// from 0 (just pressed) to 1 (fully charged); pass null to hide the bar.
+function drawChargeBar(ctx, charge) {
+  const barW = 220;
+  const barH = 16;
+  const x = 12;
+  const y = HEIGHT - 12 - barH;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+  ctx.fillRect(x, y, barW, barH);
+
+  // Fill runs green → yellow → red as the shot powers up.
+  const hue = 120 - charge * 120;
+  ctx.fillStyle = `hsl(${hue}, 85%, 55%)`;
+  ctx.fillRect(x, y, barW * charge, barH);
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, barW, barH);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "12px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(`POWER ${Math.round(charge * 100)}%`, x + 6, y + barH / 2 + 1);
+  ctx.textBaseline = "alphabetic";
+}
+
+function drawScene(ctx, planets, shots, charge) {
   // Space background.
   ctx.fillStyle = "#0a0a1a";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -323,6 +355,8 @@ function drawScene(ctx, planets, shots) {
     const decis = Math.floor((remaining - seconds) * 10);
     ctx.fillText(`${seconds}.${decis}s`, WIDTH - 12, HEIGHT - 14 - i * 18);
   });
+
+  if (charge !== null) drawChargeBar(ctx, charge);
 }
 
 // Move shots forward and drop any that hit a planet or ran out of time.
@@ -361,17 +395,23 @@ function App() {
   const [planets, setPlanets] = useState(() => generatePlanets());
 
   const heldKeysRef = useRef(new Set());
+  // While Space is held, `charging` is true and `charge` grows (in seconds)
+  // up to CHARGE_TIME. On release we launch a shot scaled by the charge.
+  const chargingRef = useRef(false);
+  const chargeRef = useRef(0);
 
   const newGame = useCallback(() => {
     shotsRef.current = [];
+    chargingRef.current = false;
+    chargeRef.current = 0;
     SHIPS[0].angle = 0;
     SHIPS[1].angle = Math.PI;
     setPlanets(generatePlanets());
   }, []);
 
-  // Space bar fires a shot from the left ship's nose, in the direction the
-  // ship is pointing. Arrow keys are tracked as held so the animation loop
-  // can spin the ship smoothly.
+  // Holding Space charges a shot; releasing it fires from the left ship's nose
+  // in the direction the ship is pointing, with speed scaled by the charge.
+  // Arrow keys are tracked as held so the animation loop can spin the ship.
   useEffect(() => {
     const onKeyDown = (event) => {
       if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
@@ -381,17 +421,26 @@ function App() {
       }
       if (event.code !== "Space") return;
       event.preventDefault();
+      // keydown auto-repeats while held; only start charging on the first one.
+      if (chargingRef.current) return;
+      chargingRef.current = true;
+      chargeRef.current = 0;
+    };
+    const onKeyUp = (event) => {
+      heldKeysRef.current.delete(event.code);
+      if (event.code !== "Space" || !chargingRef.current) return;
+      const power = Math.min(chargeRef.current / CHARGE_TIME, 1);
+      const speed = SHOT_MIN_SPEED + power * (SHOT_MAX_SPEED - SHOT_MIN_SPEED);
       const ship = SHIPS[0];
       shotsRef.current.push({
         x: ship.x + SHIP_NOSE * Math.cos(ship.angle),
         y: ship.y + SHIP_NOSE * Math.sin(ship.angle),
-        vx: SHOT_SPEED * Math.cos(ship.angle),
-        vy: SHOT_SPEED * Math.sin(ship.angle),
+        vx: speed * Math.cos(ship.angle),
+        vy: speed * Math.sin(ship.angle),
         ttl: SHOT_LIFETIME,
       });
-    };
-    const onKeyUp = (event) => {
-      heldKeysRef.current.delete(event.code);
+      chargingRef.current = false;
+      chargeRef.current = 0;
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -416,8 +465,14 @@ function App() {
       if (held.has("ArrowLeft")) SHIPS[0].angle -= ROTATION_SPEED * dt;
       if (held.has("ArrowRight")) SHIPS[0].angle += ROTATION_SPEED * dt;
 
+      let charge = null;
+      if (chargingRef.current) {
+        chargeRef.current = Math.min(chargeRef.current + dt, CHARGE_TIME);
+        charge = chargeRef.current / CHARGE_TIME;
+      }
+
       shotsRef.current = updateShots(shotsRef.current, planets, dt);
-      drawScene(ctx, planets, shotsRef.current);
+      drawScene(ctx, planets, shotsRef.current, charge);
       frameId = requestAnimationFrame(tick);
     };
     frameId = requestAnimationFrame(tick);
