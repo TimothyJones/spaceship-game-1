@@ -16,6 +16,8 @@ import {
 //   outcome  — "ship" | "planet" | "expired"
 //   hitShip  — index of the ship that was hit (only for outcome "ship";
 //              self-hits are possible when a shot curves back around)
+//   impact   — for outcome "planet": { x, y, nx, ny }, the point on the
+//              planet's surface and its outward unit normal, for effects
 //   path     — [{ x, y }] sampled every SIM_DT, for animation
 //   duration — seconds the shot flew
 export function simulateShot(planets, ships, shooter, angle, power) {
@@ -48,11 +50,28 @@ export function simulateShot(planets, ships, shooter, angle, power) {
     path.push({ x, y });
 
     for (const p of planets) {
-      const dx = p.x - x;
-      const dy = p.y - y;
+      const dx = x - p.x;
+      const dy = y - p.y;
+      const distSq = dx * dx + dy * dy;
       const limit = p.radius + SHOT_RADIUS;
-      if (dx * dx + dy * dy < limit * limit) {
-        return { outcome: "planet", hitShip: null, path, duration: elapsed };
+      if (distSq < limit * limit) {
+        // Surface normal, pointing from the planet centre out to the impact.
+        const dist = Math.sqrt(distSq);
+        const nx = dist === 0 ? 1 : dx / dist;
+        const ny = dist === 0 ? 0 : dy / dist;
+        const impact = {
+          x: p.x + nx * p.radius,
+          y: p.y + ny * p.radius,
+          nx,
+          ny,
+        };
+        return {
+          outcome: "planet",
+          hitShip: null,
+          impact,
+          path,
+          duration: elapsed,
+        };
       }
     }
 

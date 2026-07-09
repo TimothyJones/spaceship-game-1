@@ -6,9 +6,9 @@ import {
   SHOT_LIFETIME,
   ROTATION_SPEED,
   SHIP_NOSE,
-  DEFAULT_SHOT_POWER,
-  MIN_SHOT_POWER,
-  MAX_SHOT_POWER,
+  SHOT_MIN_SPEED,
+  SHOT_MAX_SPEED,
+  CHARGE_TIME,
   SIM_DT,
   SHIP_STARTS,
   simulateShot,
@@ -17,7 +17,53 @@ import { getGame, submitTurn } from "./api.js";
 
 const SHIP_COLORS = ["#7fd7ff", "#ff9d7f"];
 const POLL_INTERVAL_MS = 2000;
-const POWER_RATE = 150; // power change per second while up/down is held
+
+// Explosion behaviour, spawned where a shot strikes a planet.
+const EXPLOSION_DURATION = 0.6; // seconds a burst lives for
+const PARTICLE_COUNT = 16;
+const EXPLOSION_COLORS = ["#fff3c4", "#ffd24a", "#ff9d3c", "#ff5a2c"];
+
+const randBetween = (min, max) => min + Math.random() * (max - min);
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+// Spawn a burst of particles plus an expanding shockwave at an impact point.
+// `nx`/`ny` is the (unit) surface normal so the debris sprays back outward
+// from the planet rather than into it.
+function createExplosion(x, y, nx, ny) {
+  const baseAngle = Math.atan2(ny, nx);
+  const particles = [];
+  for (let i = 0; i < PARTICLE_COUNT; i += 1) {
+    // Bias the spray into the hemisphere pointing away from the planet.
+    const angle = baseAngle + randBetween(-Math.PI / 2, Math.PI / 2);
+    const speed = randBetween(60, 240);
+    particles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: randBetween(1.5, 3.5),
+      color: pick(EXPLOSION_COLORS),
+    });
+  }
+  return { x, y, age: 0, duration: EXPLOSION_DURATION, particles };
+}
+
+// Advance each explosion and drop the ones that have finished.
+function updateExplosions(explosions, dt) {
+  return explosions.filter((explosion) => {
+    explosion.age += dt;
+    if (explosion.age >= explosion.duration) return false;
+    explosion.particles.forEach((p) => {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      // Air-drag style slow-down so debris eases to a stop.
+      const drag = Math.exp(-2.5 * dt);
+      p.vx *= drag;
+      p.vy *= drag;
+    });
+    return true;
+  });
+}
 
 function drawShip(ctx, ship, color) {
   ctx.save();
@@ -34,11 +80,129 @@ function drawShip(ctx, ship, color) {
   ctx.restore();
 }
 
-function drawPlanet(ctx, planet) {
+function fillDisc(ctx, cx, cy, r, color) {
   ctx.beginPath();
-  ctx.arc(planet.x, planet.y, planet.radius, 0, Math.PI * 2);
-  ctx.fillStyle = planet.color;
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
   ctx.fill();
+}
+
+function drawGas(ctx, x, y, r, f) {
+  f.bands.forEach((b) => {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(x - r, y + b.y0 * r, r * 2, (b.y1 - b.y0) * r);
+  });
+  if (f.spot) {
+    ctx.fillStyle = f.spot.color;
+    ctx.beginPath();
+    ctx.ellipse(
+      x + f.spot.cx * r,
+      y + f.spot.cy * r,
+      f.spot.rx * r,
+      f.spot.ry * r,
+      0,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+  }
+}
+
+function drawEarth(ctx, x, y, r, f) {
+  f.blobs.forEach((b) =>
+    fillDisc(ctx, x + b.cx * r, y + b.cy * r, b.r * r, b.color),
+  );
+}
+
+function drawMars(ctx, x, y, r, f) {
+  f.patches.forEach((p) =>
+    fillDisc(ctx, x + p.cx * r, y + p.cy * r, p.r * r, p.color),
+  );
+  // Polar ice caps top and bottom.
+  ctx.fillStyle = f.pole;
+  for (const sign of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(x, y + sign * r * 0.9, r * 0.55, r * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawMoon(ctx, x, y, r, f) {
+  f.craters.forEach((c) => {
+    const cx = x + c.cx * r;
+    const cy = y + c.cy * r;
+    fillDisc(ctx, cx, cy, c.r * r, f.crater);
+    // A thin lighter rim on the lower edge for a touch of relief.
+    ctx.strokeStyle = f.rim;
+    ctx.lineWidth = Math.max(1, c.r * r * 0.35);
+    ctx.beginPath();
+    ctx.arc(cx, cy, c.r * r, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.stroke();
+  });
+}
+
+function drawPlanet(ctx, planet) {
+  const { x, y, radius, type, features } = planet;
+
+  ctx.save();
+  // Clip all surface detail to the planet disc.
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.clip();
+
+  // Base colour first so any gaps between features are covered.
+  ctx.fillStyle = features.base;
+  ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+
+  if (type === "gas") drawGas(ctx, x, y, radius, features);
+  else if (type === "earth") drawEarth(ctx, x, y, radius, features);
+  else if (type === "mars") drawMars(ctx, x, y, radius, features);
+  else drawMoon(ctx, x, y, radius, features);
+
+  ctx.restore();
+
+  // Subtle outline to separate the planet from the background.
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawExplosion(ctx, explosion) {
+  const t = explosion.age / explosion.duration; // 0 -> 1
+  const fade = 1 - t;
+
+  ctx.save();
+
+  // Expanding shockwave ring.
+  const ringRadius = 6 + t * 46;
+  ctx.globalAlpha = fade * 0.7;
+  ctx.strokeStyle = "#ffd24a";
+  ctx.lineWidth = 2 * fade + 0.5;
+  ctx.beginPath();
+  ctx.arc(explosion.x, explosion.y, ringRadius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Bright central flash, brief.
+  if (t < 0.35) {
+    ctx.globalAlpha = (1 - t / 0.35) * 0.9;
+    ctx.fillStyle = "#fff3c4";
+    ctx.beginPath();
+    ctx.arc(explosion.x, explosion.y, 7 * (1 - t / 0.35) + 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Debris particles.
+  explosion.particles.forEach((p) => {
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * fade, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
 }
 
 function drawBackground(ctx) {
@@ -54,13 +218,11 @@ function drawBackground(ctx) {
   }
 }
 
-function drawAimGuide(ctx, ship, aim) {
-  const powerFrac =
-    (aim.power - MIN_SHOT_POWER) / (MAX_SHOT_POWER - MIN_SHOT_POWER);
-  const length = 30 + powerFrac * 50;
+function drawAimGuide(ctx, ship, angle, charge) {
+  const length = 30 + charge * 50;
   ctx.save();
   ctx.translate(ship.x, ship.y);
-  ctx.rotate(aim.angle);
+  ctx.rotate(angle);
   ctx.strokeStyle = "rgba(255, 217, 74, 0.5)";
   ctx.setLineDash([4, 4]);
   ctx.beginPath();
@@ -70,33 +232,52 @@ function drawAimGuide(ctx, ship, aim) {
   ctx.restore();
 }
 
-function drawPowerBar(ctx, power) {
-  const frac = (power - MIN_SHOT_POWER) / (MAX_SHOT_POWER - MIN_SHOT_POWER);
-  ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
-  ctx.font = "13px monospace";
+// Draw the power meter that fills while Space is held. `charge` is a fraction
+// from 0 (just pressed) to 1 (fully charged); pass null to hide the bar.
+function drawChargeBar(ctx, charge) {
+  const barW = 220;
+  const barH = 16;
+  const x = 12;
+  const y = HEIGHT - 12 - barH;
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+  ctx.fillRect(x, y, barW, barH);
+
+  // Fill runs green → yellow → red as the shot powers up.
+  const hue = 120 - charge * 120;
+  ctx.fillStyle = `hsl(${hue}, 85%, 55%)`;
+  ctx.fillRect(x, y, barW * charge, barH);
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, barW, barH);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "12px monospace";
   ctx.textAlign = "left";
-  ctx.fillText(`power ${Math.round(power)}`, 14, HEIGHT - 30);
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
-  ctx.strokeRect(14, HEIGHT - 24, 120, 10);
-  ctx.fillStyle = "#ffd94a";
-  ctx.fillRect(14, HEIGHT - 24, 120 * frac, 10);
+  ctx.textBaseline = "middle";
+  ctx.fillText(`POWER ${Math.round(charge * 100)}%`, x + 6, y + barH / 2 + 1);
+  ctx.textBaseline = "alphabetic";
 }
 
 // The playing field. The server owns the game; this component polls it for
-// new state, lets the current player aim (arrows) and fire (space), and
-// replays each resolved shot as an animation by re-simulating it with the
-// shared engine (the outcome shown is always the server's).
+// new state, lets the current player aim (arrows) and fire (hold Space to
+// charge, release to shoot), and replays each resolved shot as an animation
+// by re-simulating it with the shared engine (the outcome shown is always
+// the server's).
 function Game({ session, initialGame, onLeave }) {
   const me = session.playerIndex;
 
   const canvasRef = useRef(null);
   const displayRef = useRef(initialGame); // state currently rendered
   const latestRef = useRef(initialGame); // newest state from the server
-  const animRef = useRef(null); // { shot, path, i } while replaying a shot
-  const aimRef = useRef({
-    angle: initialGame.ships[me].angle,
-    power: DEFAULT_SHOT_POWER,
-  });
+  const animRef = useRef(null); // { shot, path, impact, i } while replaying
+  const explosionsRef = useRef([]);
+  const aimRef = useRef({ angle: initialGame.ships[me].angle });
+  // While Space is held, `charging` is true and `charge` grows (in seconds)
+  // up to CHARGE_TIME. On release we fire a shot scaled by the charge.
+  const chargingRef = useRef(false);
+  const chargeRef = useRef(0);
   const heldKeysRef = useRef(new Set());
   const fireBusyRef = useRef(false);
   const fireRef = useRef(() => {});
@@ -134,7 +315,7 @@ function Game({ session, initialGame, onLeave }) {
           shot.angle,
           shot.power,
         );
-        animRef.current = { shot, path: sim.path, i: 0 };
+        animRef.current = { shot, path: sim.path, impact: sim.impact, i: 0 };
       } else {
         // Anything else (join, or we're several turns behind): jump to it.
         commit(game);
@@ -165,7 +346,7 @@ function Game({ session, initialGame, onLeave }) {
   }, [session.gameId, handleIncoming]);
 
   // Firing. Kept in a ref so the mount-once key listener sees fresh state.
-  fireRef.current = async () => {
+  fireRef.current = async (power) => {
     const latest = latestRef.current;
     const myTurn =
       latest.status === "playing" &&
@@ -178,7 +359,7 @@ function Game({ session, initialGame, onLeave }) {
         session.gameId,
         session.token,
         aimRef.current.angle,
-        aimRef.current.power,
+        power,
       );
       setError(null);
       handleIncoming(game);
@@ -189,23 +370,38 @@ function Game({ session, initialGame, onLeave }) {
     }
   };
 
-  // Arrows are tracked as held so the animation loop can adjust aim smoothly;
-  // space fires.
+  // Arrow keys are tracked as held so the animation loop can spin the ship
+  // smoothly. Holding Space charges a shot; releasing it fires with speed
+  // scaled by the charge.
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (
-        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.code)
-      ) {
+      if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
         event.preventDefault();
         heldKeysRef.current.add(event.code);
         return;
       }
       if (event.code !== "Space") return;
       event.preventDefault();
-      fireRef.current();
+      // keydown auto-repeats while held; only start charging on the first one.
+      if (chargingRef.current) return;
+      const latest = latestRef.current;
+      const myTurn =
+        latest.status === "playing" &&
+        latest.currentPlayer === me &&
+        !animRef.current &&
+        !fireBusyRef.current;
+      if (!myTurn) return;
+      chargingRef.current = true;
+      chargeRef.current = 0;
     };
     const onKeyUp = (event) => {
       heldKeysRef.current.delete(event.code);
+      if (event.code !== "Space" || !chargingRef.current) return;
+      const charge = Math.min(chargeRef.current / CHARGE_TIME, 1);
+      const power = SHOT_MIN_SPEED + charge * (SHOT_MAX_SPEED - SHOT_MIN_SPEED);
+      chargingRef.current = false;
+      chargeRef.current = 0;
+      fireRef.current(power);
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
@@ -213,9 +409,10 @@ function Game({ session, initialGame, onLeave }) {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, []);
+  }, [me]);
 
-  // Render loop: apply held keys to the aim, advance any shot replay, draw.
+  // Render loop: apply held keys to the aim, grow the charge, advance any
+  // shot replay and explosions, draw.
   useEffect(() => {
     const ctx = canvasRef.current.getContext("2d");
     let frameId;
@@ -232,15 +429,14 @@ function Game({ session, initialGame, onLeave }) {
 
       if (myTurn) {
         const held = heldKeysRef.current;
-        const aim = aimRef.current;
-        if (held.has("ArrowLeft")) aim.angle -= ROTATION_SPEED * dt;
-        if (held.has("ArrowRight")) aim.angle += ROTATION_SPEED * dt;
-        if (held.has("ArrowUp")) aim.power += POWER_RATE * dt;
-        if (held.has("ArrowDown")) aim.power -= POWER_RATE * dt;
-        aim.power = Math.min(
-          MAX_SHOT_POWER,
-          Math.max(MIN_SHOT_POWER, aim.power),
-        );
+        if (held.has("ArrowLeft")) aimRef.current.angle -= ROTATION_SPEED * dt;
+        if (held.has("ArrowRight")) aimRef.current.angle += ROTATION_SPEED * dt;
+      }
+
+      let charge = null;
+      if (chargingRef.current) {
+        chargeRef.current = Math.min(chargeRef.current + dt, CHARGE_TIME);
+        charge = chargeRef.current / CHARGE_TIME;
       }
 
       drawBackground(ctx);
@@ -257,6 +453,16 @@ function Game({ session, initialGame, onLeave }) {
       if (anim) {
         anim.i += dt / SIM_DT;
         if (anim.i >= anim.path.length) {
+          if (anim.impact) {
+            explosionsRef.current.push(
+              createExplosion(
+                anim.impact.x,
+                anim.impact.y,
+                anim.impact.nx,
+                anim.impact.ny,
+              ),
+            );
+          }
           animRef.current = null;
           commit(latestRef.current);
         } else {
@@ -276,10 +482,15 @@ function Game({ session, initialGame, onLeave }) {
         }
       }
 
+      explosionsRef.current = updateExplosions(explosionsRef.current, dt);
+      explosionsRef.current.forEach((explosion) =>
+        drawExplosion(ctx, explosion),
+      );
+
       if (myTurn) {
-        drawAimGuide(ctx, game.ships[me], aimRef.current);
-        drawPowerBar(ctx, aimRef.current.power);
+        drawAimGuide(ctx, game.ships[me], aimRef.current.angle, charge ?? 0);
       }
+      if (charge !== null) drawChargeBar(ctx, charge);
 
       frameId = requestAnimationFrame(tick);
     };
@@ -299,7 +510,8 @@ function Game({ session, initialGame, onLeave }) {
   } else if (shownGame.status === "finished") {
     statusLine = `${shownGame.players[shownGame.winner].name} wins the match!`;
   } else if (shownGame.currentPlayer === me) {
-    statusLine = "Your turn — ← → aim, ↑ ↓ power, space to fire";
+    statusLine =
+      "Your turn — ← → to aim, hold Space to charge, release to fire";
   } else {
     statusLine = `Waiting for ${opponent?.name ?? "opponent"}…`;
   }

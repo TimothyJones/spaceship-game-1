@@ -3,15 +3,6 @@ export const HEIGHT = 600;
 export const MIN_PLANETS = 3;
 export const MAX_PLANETS = 5;
 
-export const PLANET_COLORS = [
-  "#c96f4a",
-  "#4a90c9",
-  "#5bc96f",
-  "#c9b04a",
-  "#9b5bc9",
-  "#4ac9b0",
-];
-
 export const SHOT_RADIUS = 5;
 export const SHOT_LIFETIME = 10; // seconds a shot lives, even off-screen
 // Gravitational constant, tuned for gameplay. A planet's mass scales with
@@ -25,9 +16,11 @@ export const SHIP_HIT_RADIUS = 16; // ships are treated as circles for hit detec
 // shooter's own hit circle (24 > SHIP_HIT_RADIUS + SHOT_RADIUS).
 export const SHOT_SPAWN_DIST = SHIP_NOSE + SHOT_RADIUS + 1;
 
-export const DEFAULT_SHOT_POWER = 280; // pixels per second
-export const MIN_SHOT_POWER = 140;
-export const MAX_SHOT_POWER = 480;
+// A shot's launch speed depends on how long Space is held. Releasing instantly
+// fires at the minimum; holding for CHARGE_TIME seconds reaches the maximum.
+export const SHOT_MIN_SPEED = 160; // pixels per second, at no charge
+export const SHOT_MAX_SPEED = 560; // pixels per second, at full charge
+export const CHARGE_TIME = 1.4; // seconds of holding Space to reach full power
 
 // Fixed simulation timestep. Server and client both step shots at this rate,
 // so a client can replay a shot for animation and land on the same outcome

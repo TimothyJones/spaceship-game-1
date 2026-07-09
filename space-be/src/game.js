@@ -1,8 +1,7 @@
 import crypto from "node:crypto";
 import {
-  DEFAULT_SHOT_POWER,
-  MIN_SHOT_POWER,
-  MAX_SHOT_POWER,
+  SHOT_MIN_SPEED,
+  SHOT_MAX_SPEED,
   SHIP_STARTS,
   generatePlanets,
   simulateShot,
@@ -74,8 +73,8 @@ export function applyTurn(game, token, angle, power) {
     throw new GameError(400, "angle must be a number");
 
   const clampedPower = Math.min(
-    MAX_SHOT_POWER,
-    Math.max(MIN_SHOT_POWER, Number(power) || DEFAULT_SHOT_POWER),
+    SHOT_MAX_SPEED,
+    Math.max(SHOT_MIN_SPEED, Number(power) || SHOT_MIN_SPEED),
   );
 
   const result = simulateShot(
