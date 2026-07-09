@@ -1,0 +1,17 @@
+{
+  "name": "spaceship-game",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "space-fe"
+  ],
+  "scripts": {
+    "dev": "nx dev space-fe",
+    "build": "nx build space-fe",
+    "preview": "nx preview space-fe",
+    "lint": "nx lint space-fe"
+  },
+  "devDependencies": {
+    "nx": "^23.0.1"
+  }
+}
