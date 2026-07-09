@@ -7,8 +7,12 @@ const MIN_PLANETS = 3;
 const MAX_PLANETS = 5;
 
 const SHOT_RADIUS = 5;
-const SHOT_SPEED = 420; // pixels per second
-const ROTATION_SPEED = Math.PI; // radians per second while an arrow is held
+const SHOT_SPEED = 280; // pixels per second
+const SHOT_LIFETIME = 10; // seconds a shot lives, even off-screen
+// Gravitational constant, tuned for gameplay. A planet's mass scales with
+// radius², so bigger planets pull harder; pull falls off with distance².
+const GRAVITY = 1000;
+const ROTATION_SPEED = Math.PI / 2; // radians per second while an arrow is held
 const SHIP_NOSE = 18; // distance from ship centre to its nose
 
 const randBetween = (min, max) => min + Math.random() * (max - min);
@@ -308,21 +312,41 @@ function drawScene(ctx, planets, shots) {
   planets.forEach((planet) => drawPlanet(ctx, planet));
   SHIPS.forEach((ship) => drawShip(ctx, ship));
   shots.forEach((shot) => drawShot(ctx, shot));
+
+  // Remaining lifetime of each shot, stacked up from the bottom-right corner.
+  ctx.fillStyle = "#ffd94a";
+  ctx.font = "14px monospace";
+  ctx.textAlign = "right";
+  shots.forEach((shot, i) => {
+    const remaining = Math.max(shot.ttl, 0);
+    const seconds = Math.floor(remaining);
+    const decis = Math.floor((remaining - seconds) * 10);
+    ctx.fillText(`${seconds}.${decis}s`, WIDTH - 12, HEIGHT - 14 - i * 18);
+  });
 }
 
-// Move shots forward and drop any that hit a planet or left the screen.
+// Move shots forward and drop any that hit a planet or ran out of time.
+// Shots may leave the screen and be pulled back by gravity, so they only
+// expire when their lifetime does. Each planet attracts shots:
+// acceleration = GRAVITY * radius² / distance², pointed at the planet's centre.
 function updateShots(shots, planets, dt) {
   return shots.filter((shot) => {
+    shot.ttl -= dt;
+    if (shot.ttl <= 0) return false;
+
+    planets.forEach((p) => {
+      const dx = p.x - shot.x;
+      const dy = p.y - shot.y;
+      const distSq = dx * dx + dy * dy;
+      const dist = Math.sqrt(distSq);
+      if (dist === 0) return;
+      const accel = (GRAVITY * p.radius * p.radius) / distSq;
+      shot.vx += (dx / dist) * accel * dt;
+      shot.vy += (dy / dist) * accel * dt;
+    });
+
     shot.x += shot.vx * dt;
     shot.y += shot.vy * dt;
-
-    if (
-      shot.x < -SHOT_RADIUS ||
-      shot.x > WIDTH + SHOT_RADIUS ||
-      shot.y < -SHOT_RADIUS ||
-      shot.y > HEIGHT + SHOT_RADIUS
-    )
-      return false;
 
     const hitPlanet = planets.some(
       (p) => Math.hypot(p.x - shot.x, p.y - shot.y) < p.radius + SHOT_RADIUS,
@@ -363,6 +387,7 @@ function App() {
         y: ship.y + SHIP_NOSE * Math.sin(ship.angle),
         vx: SHOT_SPEED * Math.cos(ship.angle),
         vy: SHOT_SPEED * Math.sin(ship.angle),
+        ttl: SHOT_LIFETIME,
       });
     };
     const onKeyUp = (event) => {
