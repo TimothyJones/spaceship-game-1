@@ -1,122 +1,146 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useCallback, useEffect, useRef, useState } from "react";
+import "./App.css";
 
-function App() {
-  const [count, setCount] = useState(0)
+const WIDTH = 900;
+const HEIGHT = 600;
+const MIN_PLANETS = 3;
+const MAX_PLANETS = 5;
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+const PLANET_COLORS = [
+  "#c96f4a",
+  "#4a90c9",
+  "#5bc96f",
+  "#c9b04a",
+  "#9b5bc9",
+  "#4ac9b0",
+];
 
-      <div className="ticks"></div>
+const randBetween = (min, max) => min + Math.random() * (max - min);
+const randInt = (min, max) => Math.floor(randBetween(min, max + 1));
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+// The two ships live on opposite sides of the screen, vertically centred.
+const SHIPS = [
+  { x: 60, y: HEIGHT / 2, color: "#7fd7ff", facing: 1 },
+  { x: WIDTH - 60, y: HEIGHT / 2, color: "#ff9d7f", facing: -1 },
+];
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+// Generate 3-5 planets that don't overlap each other or sit on top of a ship.
+// One big planet always sits roughly in the middle so the ships (which share a
+// horizontal line) can't hit each other with a straight, direct shot.
+function generatePlanets() {
+  const count = randInt(MIN_PLANETS, MAX_PLANETS);
+  const centralRadius = randBetween(110, 140);
+  const central = {
+    x: WIDTH / 2 + randBetween(-40, 40),
+    // Keep it on the ships' firing line so it blocks the direct shot.
+    y: HEIGHT / 2 + randBetween(-centralRadius / 3, centralRadius / 3),
+    radius: centralRadius,
+    color: PLANET_COLORS[randInt(0, PLANET_COLORS.length - 1)],
+  };
+  const planets = [central];
+  let attempts = 0;
+
+  while (planets.length < count && attempts < 1000) {
+    attempts += 1;
+    const radius = randBetween(30, 70);
+    const candidate = {
+      x: randBetween(radius, WIDTH - radius),
+      y: randBetween(radius, HEIGHT - radius),
+      radius,
+      color: PLANET_COLORS[randInt(0, PLANET_COLORS.length - 1)],
+    };
+
+    const tooCloseToShip = SHIPS.some(
+      (ship) =>
+        Math.hypot(ship.x - candidate.x, ship.y - candidate.y) < radius + 90,
+    );
+    if (tooCloseToShip) continue;
+
+    // Keep a clear gap of at least half of each planet's radius between them,
+    // so planets never sit very close together.
+    const tooClose = planets.some(
+      (p) =>
+        Math.hypot(p.x - candidate.x, p.y - candidate.y) <
+        p.radius * 1.5 + radius * 1.5,
+    );
+    if (tooClose) continue;
+
+    planets.push(candidate);
+  }
+
+  return planets;
 }
 
-export default App
+function drawShip(ctx, ship) {
+  ctx.save();
+  ctx.translate(ship.x, ship.y);
+  ctx.scale(ship.facing, 1);
+  ctx.fillStyle = ship.color;
+  ctx.beginPath();
+  ctx.moveTo(18, 0);
+  ctx.lineTo(-14, -12);
+  ctx.lineTo(-8, 0);
+  ctx.lineTo(-14, 12);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPlanet(ctx, planet) {
+  ctx.beginPath();
+  ctx.arc(planet.x, planet.y, planet.radius, 0, Math.PI * 2);
+  ctx.fillStyle = planet.color;
+  ctx.fill();
+}
+
+function drawScene(ctx, planets) {
+  // Space background.
+  ctx.fillStyle = "#0a0a1a";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  // A sprinkling of stars for depth (deterministic so it doesn't flicker).
+  ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+  for (let i = 0; i < 120; i += 1) {
+    const x = (i * 137) % WIDTH;
+    const y = (i * 251) % HEIGHT;
+    ctx.fillRect(x, y, 1.5, 1.5);
+  }
+
+  planets.forEach((planet) => drawPlanet(ctx, planet));
+  SHIPS.forEach((ship) => drawShip(ctx, ship));
+}
+
+function App() {
+  const canvasRef = useRef(null);
+  const [planets, setPlanets] = useState(() => generatePlanets());
+
+  const newGame = useCallback(() => {
+    setPlanets(generatePlanets());
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    drawScene(ctx, planets);
+  }, [planets]);
+
+  return (
+    <div className="game">
+      <header className="game__header">
+        <h1>Spaceship Game</h1>
+        <button type="button" className="game__button" onClick={newGame}>
+          New game
+        </button>
+      </header>
+      <canvas
+        ref={canvasRef}
+        width={WIDTH}
+        height={HEIGHT}
+        className="game__canvas"
+      />
+    </div>
+  );
+}
+
+export default App;
