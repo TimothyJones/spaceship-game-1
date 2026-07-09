@@ -15,13 +15,19 @@ const PLANET_COLORS = [
   "#4ac9b0",
 ];
 
+const SHOT_RADIUS = 5;
+const SHOT_SPEED = 420; // pixels per second
+const ROTATION_SPEED = Math.PI; // radians per second while an arrow is held
+const SHIP_NOSE = 18; // distance from ship centre to its nose
+
 const randBetween = (min, max) => min + Math.random() * (max - min);
 const randInt = (min, max) => Math.floor(randBetween(min, max + 1));
 
 // The two ships live on opposite sides of the screen, vertically centred.
+// `angle` is the direction the nose points (radians, 0 = right).
 const SHIPS = [
-  { x: 60, y: HEIGHT / 2, color: "#7fd7ff", facing: 1 },
-  { x: WIDTH - 60, y: HEIGHT / 2, color: "#ff9d7f", facing: -1 },
+  { x: 60, y: HEIGHT / 2, color: "#7fd7ff", angle: 0 },
+  { x: WIDTH - 60, y: HEIGHT / 2, color: "#ff9d7f", angle: Math.PI },
 ];
 
 // Generate 3-5 planets that don't overlap each other or sit on top of a ship.
@@ -74,7 +80,7 @@ function generatePlanets() {
 function drawShip(ctx, ship) {
   ctx.save();
   ctx.translate(ship.x, ship.y);
-  ctx.scale(ship.facing, 1);
+  ctx.rotate(ship.angle);
   ctx.fillStyle = ship.color;
   ctx.beginPath();
   ctx.moveTo(18, 0);
@@ -93,7 +99,14 @@ function drawPlanet(ctx, planet) {
   ctx.fill();
 }
 
-function drawScene(ctx, planets) {
+function drawShot(ctx, shot) {
+  ctx.beginPath();
+  ctx.arc(shot.x, shot.y, SHOT_RADIUS, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffd94a";
+  ctx.fill();
+}
+
+function drawScene(ctx, planets, shots) {
   // Space background.
   ctx.fillStyle = "#0a0a1a";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -108,21 +121,96 @@ function drawScene(ctx, planets) {
 
   planets.forEach((planet) => drawPlanet(ctx, planet));
   SHIPS.forEach((ship) => drawShip(ctx, ship));
+  shots.forEach((shot) => drawShot(ctx, shot));
+}
+
+// Move shots forward and drop any that hit a planet or left the screen.
+function updateShots(shots, planets, dt) {
+  return shots.filter((shot) => {
+    shot.x += shot.vx * dt;
+    shot.y += shot.vy * dt;
+
+    if (
+      shot.x < -SHOT_RADIUS ||
+      shot.x > WIDTH + SHOT_RADIUS ||
+      shot.y < -SHOT_RADIUS ||
+      shot.y > HEIGHT + SHOT_RADIUS
+    )
+      return false;
+
+    const hitPlanet = planets.some(
+      (p) => Math.hypot(p.x - shot.x, p.y - shot.y) < p.radius + SHOT_RADIUS,
+    );
+    return !hitPlanet;
+  });
 }
 
 function App() {
   const canvasRef = useRef(null);
+  const shotsRef = useRef([]);
   const [planets, setPlanets] = useState(() => generatePlanets());
 
+  const heldKeysRef = useRef(new Set());
+
   const newGame = useCallback(() => {
+    shotsRef.current = [];
+    SHIPS[0].angle = 0;
+    SHIPS[1].angle = Math.PI;
     setPlanets(generatePlanets());
+  }, []);
+
+  // Space bar fires a shot from the left ship's nose, in the direction the
+  // ship is pointing. Arrow keys are tracked as held so the animation loop
+  // can spin the ship smoothly.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+        event.preventDefault();
+        heldKeysRef.current.add(event.code);
+        return;
+      }
+      if (event.code !== "Space") return;
+      event.preventDefault();
+      const ship = SHIPS[0];
+      shotsRef.current.push({
+        x: ship.x + SHIP_NOSE * Math.cos(ship.angle),
+        y: ship.y + SHIP_NOSE * Math.sin(ship.angle),
+        vx: SHOT_SPEED * Math.cos(ship.angle),
+        vy: SHOT_SPEED * Math.sin(ship.angle),
+      });
+    };
+    const onKeyUp = (event) => {
+      heldKeysRef.current.delete(event.code);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
-    drawScene(ctx, planets);
+
+    let frameId;
+    let lastTime = performance.now();
+    const tick = (time) => {
+      const dt = Math.min((time - lastTime) / 1000, 0.05);
+      lastTime = time;
+
+      const held = heldKeysRef.current;
+      if (held.has("ArrowLeft")) SHIPS[0].angle -= ROTATION_SPEED * dt;
+      if (held.has("ArrowRight")) SHIPS[0].angle += ROTATION_SPEED * dt;
+
+      shotsRef.current = updateShots(shotsRef.current, planets, dt);
+      drawScene(ctx, planets, shotsRef.current);
+      frameId = requestAnimationFrame(tick);
+    };
+    frameId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frameId);
   }, [planets]);
 
   return (
