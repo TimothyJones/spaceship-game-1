@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Spaceship game backend: one router Lambda behind an HTTP API, with game
+  state in DynamoDB. Deploy with `sam build && sam deploy --guided` from
+  space-be/. Clients poll GET /api/games/{id} for new turns.
+
+Resources:
+  GamesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/lambda.handler
+      Runtime: nodejs22.x
+      Timeout: 10
+      MemorySize: 256
+      Environment:
+        Variables:
+          GAME_TABLE: !Ref GamesTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref GamesTable
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            Path: /api/{proxy+}
+            Method: ANY
+    Metadata:
+      # esbuild bundles the workspace-linked space-engine package into the
+      # artifact; the AWS SDK is provided by the Lambda runtime.
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: node22
+        OutExtension:
+          - .js=.mjs
+        EntryPoints:
+          - src/lambda.js
+        External:
+          - "@aws-sdk/*"
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the game API (frontend VITE_API_URL is this + /api)
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
