@@ -19,6 +19,11 @@ const GRAVITY = 1000;
 const ROTATION_SPEED = Math.PI / 2; // radians per second while an arrow is held
 const SHIP_NOSE = 18; // distance from ship centre to its nose
 
+// Explosion behaviour, spawned where a shot strikes a planet.
+const EXPLOSION_DURATION = 0.6; // seconds a burst lives for
+const PARTICLE_COUNT = 16;
+const EXPLOSION_COLORS = ["#fff3c4", "#ffd24a", "#ff9d3c", "#ff5a2c"];
+
 const randBetween = (min, max) => min + Math.random() * (max - min);
 const randInt = (min, max) => Math.floor(randBetween(min, max + 1));
 const pick = (arr) => arr[randInt(0, arr.length - 1)];
@@ -189,6 +194,45 @@ function generatePlanets() {
   return planets;
 }
 
+// Spawn a burst of particles plus an expanding shockwave at an impact point.
+// `nx`/`ny` is the (unit) surface normal so the debris sprays back outward
+// from the planet rather than into it.
+function createExplosion(x, y, nx, ny) {
+  const baseAngle = Math.atan2(ny, nx);
+  const particles = [];
+  for (let i = 0; i < PARTICLE_COUNT; i += 1) {
+    // Bias the spray into the hemisphere pointing away from the planet.
+    const angle = baseAngle + randBetween(-Math.PI / 2, Math.PI / 2);
+    const speed = randBetween(60, 240);
+    particles.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: randBetween(1.5, 3.5),
+      color: pick(EXPLOSION_COLORS),
+    });
+  }
+  return { x, y, age: 0, duration: EXPLOSION_DURATION, particles };
+}
+
+// Advance each explosion and drop the ones that have finished.
+function updateExplosions(explosions, dt) {
+  return explosions.filter((explosion) => {
+    explosion.age += dt;
+    if (explosion.age >= explosion.duration) return false;
+    explosion.particles.forEach((p) => {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      // Air-drag style slow-down so debris eases to a stop.
+      const drag = Math.exp(-2.5 * dt);
+      p.vx *= drag;
+      p.vy *= drag;
+    });
+    return true;
+  });
+}
+
 function drawShip(ctx, ship) {
   ctx.save();
   ctx.translate(ship.x, ship.y);
@@ -216,6 +260,42 @@ function drawShot(ctx, shot) {
   ctx.arc(shot.x, shot.y, SHOT_RADIUS, 0, Math.PI * 2);
   ctx.fillStyle = "#ffd94a";
   ctx.fill();
+}
+
+function drawExplosion(ctx, explosion) {
+  const t = explosion.age / explosion.duration; // 0 -> 1
+  const fade = 1 - t;
+
+  ctx.save();
+
+  // Expanding shockwave ring.
+  const ringRadius = 6 + t * 46;
+  ctx.globalAlpha = fade * 0.7;
+  ctx.strokeStyle = "#ffd24a";
+  ctx.lineWidth = 2 * fade + 0.5;
+  ctx.beginPath();
+  ctx.arc(explosion.x, explosion.y, ringRadius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Bright central flash, brief.
+  if (t < 0.35) {
+    ctx.globalAlpha = (1 - t / 0.35) * 0.9;
+    ctx.fillStyle = "#fff3c4";
+    ctx.beginPath();
+    ctx.arc(explosion.x, explosion.y, 7 * (1 - t / 0.35) + 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Debris particles.
+  explosion.particles.forEach((p) => {
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * fade, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
 }
 
 function drawGas(ctx, x, y, r, f) {
@@ -328,7 +408,7 @@ function drawChargeBar(ctx, charge) {
   ctx.textBaseline = "alphabetic";
 }
 
-function drawScene(ctx, planets, shots, charge) {
+function drawScene(ctx, planets, shots, explosions, charge) {
   // Space background.
   ctx.fillStyle = "#0a0a1a";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -344,6 +424,7 @@ function drawScene(ctx, planets, shots, charge) {
   planets.forEach((planet) => drawPlanet(ctx, planet));
   SHIPS.forEach((ship) => drawShip(ctx, ship));
   shots.forEach((shot) => drawShot(ctx, shot));
+  explosions.forEach((explosion) => drawExplosion(ctx, explosion));
 
   // Remaining lifetime of each shot, stacked up from the bottom-right corner.
   ctx.fillStyle = "#ffd94a";
@@ -363,7 +444,9 @@ function drawScene(ctx, planets, shots, charge) {
 // Shots may leave the screen and be pulled back by gravity, so they only
 // expire when their lifetime does. Each planet attracts shots:
 // acceleration = GRAVITY * radius² / distance², pointed at the planet's centre.
-function updateShots(shots, planets, dt) {
+// A shot that strikes a planet pushes an explosion into `explosions`; planets
+// are indestructible, so the shot is simply consumed.
+function updateShots(shots, planets, dt, explosions) {
   return shots.filter((shot) => {
     shot.ttl -= dt;
     if (shot.ttl <= 0) return false;
@@ -382,16 +465,28 @@ function updateShots(shots, planets, dt) {
     shot.x += shot.vx * dt;
     shot.y += shot.vy * dt;
 
-    const hitPlanet = planets.some(
-      (p) => Math.hypot(p.x - shot.x, p.y - shot.y) < p.radius + SHOT_RADIUS,
-    );
-    return !hitPlanet;
+    for (const p of planets) {
+      const dx = shot.x - p.x;
+      const dy = shot.y - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < p.radius + SHOT_RADIUS) {
+        // Surface normal, pointing from the planet centre out to the impact.
+        const nx = dist === 0 ? 1 : dx / dist;
+        const ny = dist === 0 ? 0 : dy / dist;
+        explosions.push(
+          createExplosion(p.x + nx * p.radius, p.y + ny * p.radius, nx, ny),
+        );
+        return false;
+      }
+    }
+    return true;
   });
 }
 
 function App() {
   const canvasRef = useRef(null);
   const shotsRef = useRef([]);
+  const explosionsRef = useRef([]);
   const [planets, setPlanets] = useState(() => generatePlanets());
 
   const heldKeysRef = useRef(new Set());
@@ -402,6 +497,7 @@ function App() {
 
   const newGame = useCallback(() => {
     shotsRef.current = [];
+    explosionsRef.current = [];
     chargingRef.current = false;
     chargeRef.current = 0;
     SHIPS[0].angle = 0;
@@ -471,8 +567,14 @@ function App() {
         charge = chargeRef.current / CHARGE_TIME;
       }
 
-      shotsRef.current = updateShots(shotsRef.current, planets, dt);
-      drawScene(ctx, planets, shotsRef.current, charge);
+      shotsRef.current = updateShots(
+        shotsRef.current,
+        planets,
+        dt,
+        explosionsRef.current,
+      );
+      explosionsRef.current = updateExplosions(explosionsRef.current, dt);
+      drawScene(ctx, planets, shotsRef.current, explosionsRef.current, charge);
       frameId = requestAnimationFrame(tick);
     };
     frameId = requestAnimationFrame(tick);
