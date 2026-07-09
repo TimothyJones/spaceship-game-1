@@ -1,0 +1,24 @@
+{
+  "name": "space-be",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/local-server.js",
+    "lint": "oxlint",
+    "synth": "cdk synth",
+    "deploy": "./deploy.sh",
+    "destroy": "cdk destroy",
+    "bootstrap": "cdk bootstrap"
+  },
+  "dependencies": {
+    "space-engine": "*"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1000.0",
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.2",
+    "esbuild": "^0.25.0",
+    "oxlint": "^1.71.0"
+  }
+}

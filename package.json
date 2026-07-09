@@ -3,13 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "workspaces": [
+    "space-engine",
+    "space-be",
     "space-fe"
   ],
   "scripts": {
     "dev": "nx dev space-fe",
+    "dev:be": "nx dev space-be",
     "build": "nx build space-fe",
     "preview": "nx preview space-fe",
-    "lint": "nx lint space-fe"
+    "lint": "nx run-many -t lint"
   },
   "devDependencies": {
     "nx": "^23.0.1"

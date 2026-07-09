@@ -31,9 +31,14 @@
     color 0.15s ease;
 }
 
-.game__button:hover {
+.game__button:hover:not(:disabled) {
   background: #7fd7ff;
   color: #0a0a1a;
+}
+
+.game__button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .game__canvas {
@@ -42,4 +47,72 @@
   max-width: 100%;
   height: auto;
   box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
+}
+
+.game__scores {
+  display: flex;
+  gap: 1.25rem;
+  font-size: 1.05rem;
+}
+
+.game__status {
+  margin: 0;
+  min-height: 1.4em;
+}
+
+.game__code {
+  font-family: monospace;
+  font-size: 1.15em;
+  letter-spacing: 0.15em;
+  color: #ffd94a;
+}
+
+.game__error,
+.lobby__error {
+  margin: 0;
+  color: #ff8080;
+}
+
+.lobby {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  padding-top: 2rem;
+}
+
+.lobby__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+}
+
+.lobby input {
+  background: #131328;
+  border: 1px solid #2a2a45;
+  border-radius: 6px;
+  color: inherit;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  width: 14rem;
+}
+
+.lobby__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.lobby__join {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.lobby__join input {
+  width: 8rem;
+  text-transform: uppercase;
+  font-family: monospace;
+  letter-spacing: 0.1em;
 }
