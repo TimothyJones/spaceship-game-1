@@ -14,8 +14,14 @@ const SHOT_MAX_SPEED = 560; // pixels per second, at full charge
 const CHARGE_TIME = 1.4; // seconds of holding Space to reach full power
 const SHOT_LIFETIME = 10; // seconds a shot lives, even off-screen
 // Gravitational constant, tuned for gameplay. A planet's mass scales with
-// radius², so bigger planets pull harder; pull falls off with distance².
+// radius², so bigger planets pull harder. Pull falls off with distance^FALLOFF:
+// true inverse-square (2) fades out fast, so distant shots barely feel it. A
+// gentler exponent gives gravity a much longer reach. Strength is normalised at
+// GRAVITY_REF, so lowering the falloff pivots around that distance — the feel at
+// ~REF is unchanged while far-out shots are pulled noticeably more.
 const GRAVITY = 1000;
+const GRAVITY_FALLOFF = 1.4; // < 2 extends gravity's range; 2 is inverse-square
+const GRAVITY_REF = 180; // px; acceleration at this distance is unchanged by falloff
 const ROTATION_SPEED = Math.PI / 2; // radians per second while an arrow is held
 const SHIP_NOSE = 18; // distance from ship centre to its nose
 
@@ -461,9 +467,10 @@ function drawScene(ctx, planets, shots, explosions, charge, camera) {
 // Move shots forward and drop any that hit a planet or ran out of time.
 // Shots may leave the screen and be pulled back by gravity, so they only
 // expire when their lifetime does. Each planet attracts shots:
-// acceleration = GRAVITY * radius² / distance², pointed at the planet's centre.
-// A shot that strikes a planet pushes an explosion into `explosions`; planets
-// are indestructible, so the shot is simply consumed.
+// acceleration = GRAVITY * radius² / distance^FALLOFF (normalised at
+// GRAVITY_REF), pointed at the planet's centre. A shot that strikes a planet
+// pushes an explosion into `explosions`; planets are indestructible, so the
+// shot is simply consumed.
 function updateShots(shots, planets, dt, explosions) {
   return shots.filter((shot) => {
     shot.ttl -= dt;
@@ -472,10 +479,13 @@ function updateShots(shots, planets, dt, explosions) {
     planets.forEach((p) => {
       const dx = p.x - shot.x;
       const dy = p.y - shot.y;
-      const distSq = dx * dx + dy * dy;
-      const dist = Math.sqrt(distSq);
+      const dist = Math.hypot(dx, dy);
       if (dist === 0) return;
-      const accel = (GRAVITY * p.radius * p.radius) / distSq;
+      // Normalised falloff: denominator is dist^FALLOFF scaled so it equals
+      // dist² at GRAVITY_REF. Below 2, distant pull decays more slowly.
+      const falloff =
+        dist ** GRAVITY_FALLOFF * GRAVITY_REF ** (2 - GRAVITY_FALLOFF);
+      const accel = (GRAVITY * p.radius * p.radius) / falloff;
       shot.vx += (dx / dist) * accel * dt;
       shot.vy += (dy / dist) * accel * dt;
     });
